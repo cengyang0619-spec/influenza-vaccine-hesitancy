@@ -14,4 +14,3 @@ Prompt files:
   - `v2.md`
 - `06_first_person_decision_filter.md`
 
-Each prompt file preserves the instructions used in analysis, including the expected input fields and output schema. Where a prompt underwent substantive development, versioned files are retained within a dedicated subdirectory.
