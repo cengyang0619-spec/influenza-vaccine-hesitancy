@@ -1,17 +1,10 @@
 # Analysis
 
-Place the final statistical analysis and sensitivity-analysis scripts used to generate manuscript and supplementary results here.
+This directory contains the post-label statistical analysis scripts used in the study.
 
-Recommended modules include:
+Analysis files:
 
-- descriptive annual and monthly summaries;
-- stance and vaccine-hesitancy proportions;
-- STL decomposition and seasonal/trend analyses;
-- anomalous-month detection;
-- attribution mention-rate summaries;
-- delay-versus-refusal comparisons;
-- platform standardization and longitudinal-comparability analyses;
-- first-person sensitivity analyses;
-- other revision analyses that are reported in the manuscript or supplement.
+- `01_stance_analysis.py`
+- `02_attribution_analysis.py`
 
-Only final analysis scripts corresponding to reported results should be included. Temporary data-recovery or reconstruction scripts should not be deposited as part of the manuscript analysis pipeline.
+The scripts generate aggregate statistics for the stance, temporal, and attribution analyses reported in the manuscript and supplementary materials.
