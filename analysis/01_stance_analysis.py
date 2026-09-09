@@ -1,294 +1,152 @@
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from statsmodels.tsa.seasonal import STL
 
 
-# File locations
-INPUT_FILE = Path("data/stance_labels.csv")
-OUTPUT_DIR = Path("outputs/stance")
-
-# Parameters reported in the statistical methods
-STL_PERIOD = 12
-STL_SEASONAL = 13
-STL_TREND = 25
-HAMPEL_WINDOW = 13
-ANOMALY_THRESHOLD = 3
-
-# Stance coding used in the shared analysis file
-STANCE_NAMES = {
-    1: "pro_vaccination",
-    2: "no_explicit_stance",
-    3: "delayed_vaccination",
-    4: "vaccine_refusal",
-}
-
-
 def component_strength(component, remainder):
-    """Strength of an STL component."""
-    return max(
-        0,
-        1 - np.var(remainder, ddof=1) / np.var(component + remainder, ddof=1),
-    )
+    return max(0, 1 - np.var(remainder, ddof=1) /
+               np.var(component + remainder, ddof=1))
 
 
-def seasonal_mann_kendall(values):
-    """Seasonal Mann-Kendall test with calendar month as the season."""
-    s_total = 0
-    variance_total = 0
-    comparable_pairs = 0
-
-    for month in range(1, 13):
-        x = values[values.index.month == month].to_numpy()
-        n = len(x)
-
-        for i in range(n - 1):
-            differences = x[i + 1 :] - x[i]
-            s_total += np.sign(differences).sum()
-            comparable_pairs += len(differences)
-
-        _, tie_counts = np.unique(x, return_counts=True)
-        tie_term = sum(t * (t - 1) * (2 * t + 5) for t in tie_counts if t > 1)
-        variance_total += (n * (n - 1) * (2 * n + 5) - tie_term) / 18
-
-    if s_total > 0:
-        z_value = (s_total - 1) / np.sqrt(variance_total)
-    elif s_total < 0:
-        z_value = (s_total + 1) / np.sqrt(variance_total)
-    else:
-        z_value = 0
-
-    return {
-        "tau": s_total / comparable_pairs,
-        "z": z_value,
-        "p_value": 2 * norm.sf(abs(z_value)),
-    }
-
-
-def seasonal_theil_sen(values):
-    """Median of pairwise slopes calculated within calendar months."""
+def seasonal_trend(series):
+    s = 0
+    variance = 0
+    pairs = 0
     slopes = []
 
     for month in range(1, 13):
-        x = values[values.index.month == month]
+        x = series[series.index.month == month]
+        values = x.to_numpy()
         years = x.index.year.to_numpy()
-        observations = x.to_numpy()
+        n = len(values)
+        pairs += n * (n - 1) // 2
 
-        for i in range(len(x) - 1):
-            slopes.extend(
-                (observations[i + 1 :] - observations[i])
-                / (years[i + 1 :] - years[i])
-            )
+        for i in range(n - 1):
+            differences = values[i + 1:] - values[i]
+            s += np.sign(differences).sum()
+            slopes.extend(differences / (years[i + 1:] - years[i]))
 
-    return float(np.median(slopes))
+        _, counts = np.unique(values, return_counts=True)
+        ties = sum(c * (c - 1) * (2 * c + 5) for c in counts)
+        variance += (n * (n - 1) * (2 * n + 5) - ties) / 18
+
+    if s > 0:
+        z = (s - 1) / np.sqrt(variance)
+    elif s < 0:
+        z = (s + 1) / np.sqrt(variance)
+    else:
+        z = 0
+
+    slopes = np.sort(slopes)
+    rank_offset = norm.ppf(0.975) * np.sqrt(variance)
+    lower = int(np.floor((len(slopes) - rank_offset) / 2))
+    upper = int(np.ceil((len(slopes) + rank_offset) / 2))
+
+    return {
+        "tau": s / pairs,
+        "p_value": 2 * norm.sf(abs(z)),
+        "slope": np.median(slopes),
+        "slope_ci_low": slopes[lower],
+        "slope_ci_high": slopes[upper],
+    }
 
 
 def anomaly_scores(remainder):
-    """Robust z-score and local Hampel score for an STL remainder series."""
-    series_median = remainder.median()
-    series_mad = (remainder - series_median).abs().median()
-    robust_z = 0.6745 * (remainder - series_median) / series_mad
+    median = remainder.median()
+    mad = (remainder - median).abs().median()
+    robust_z = 0.67448975 * (remainder - median) / mad
 
-    rolling_median = remainder.rolling(
-        window=HAMPEL_WINDOW, center=True, min_periods=1
-    ).median()
-    rolling_mad = remainder.rolling(
-        window=HAMPEL_WINDOW, center=True, min_periods=1
-    ).apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
-    hampel = (remainder - rolling_median).abs() / (1.4826 * rolling_mad)
-
-    positive = (remainder > 0) & (
-        (robust_z > ANOMALY_THRESHOLD) | (hampel > ANOMALY_THRESHOLD)
+    rolling_median = remainder.rolling(13, center=True, min_periods=1).median()
+    rolling_mad = remainder.rolling(13, center=True, min_periods=1).apply(
+        lambda x: np.median(np.abs(x - np.median(x))), raw=True
     )
+    hampel = 0.67448975 * (remainder - rolling_median) / rolling_mad
+
     pattern = np.select(
-        [
-            (robust_z > ANOMALY_THRESHOLD) & (hampel > ANOMALY_THRESHOLD),
-            robust_z > ANOMALY_THRESHOLD,
-            hampel > ANOMALY_THRESHOLD,
-        ],
+        [(robust_z > 3) & (hampel > 3), robust_z > 3, hampel > 3],
         ["both_methods", "robust_z_only", "hampel_only"],
         default="",
     )
-
-    return robust_z, hampel, positive, pattern
-
-
-# 1. Read the final stance labels
-df = pd.read_csv(INPUT_FILE)
-df["date"] = pd.to_datetime(df["date"])
-df["year"] = df["date"].dt.year
-df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
-df["hesitant"] = df["stance_label"].isin([3, 4])
-
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return robust_z, hampel, pattern
 
 
-# 2. Overall stance distribution and vaccine hesitancy
-stance_summary = (
-    df["stance_label"]
-    .value_counts()
-    .reindex(STANCE_NAMES)
-    .rename_axis("stance_label")
-    .reset_index(name="n")
+data = pd.read_csv("stance_labels.csv")
+data["date"] = pd.to_datetime(data["date"])
+data["year"] = data["date"].dt.year
+data["hesitant"] = data["stance_label"].isin([3, 4])
+
+stance_distribution = (
+    data["stance_label"].value_counts().reindex([1, 2, 3, 4])
+    .rename("n").to_frame()
 )
-stance_summary["stance"] = stance_summary["stance_label"].map(STANCE_NAMES)
-stance_summary["percent"] = stance_summary["n"] / len(df) * 100
-stance_summary = stance_summary[["stance_label", "stance", "n", "percent"]]
+stance_distribution["percent"] = stance_distribution["n"] / len(data) * 100
 
-hesitancy_summary = pd.DataFrame(
-    {
-        "measure": ["vaccine_hesitancy"],
-        "n": [df["hesitant"].sum()],
-        "percent": [df["hesitant"].mean() * 100],
-    }
+annual_stance = pd.crosstab(data["year"], data["stance_label"]).reindex(
+    columns=[1, 2, 3, 4], fill_value=0
+)
+annual_stance["total"] = annual_stance.sum(axis=1)
+annual_stance["hesitant"] = annual_stance[3] + annual_stance[4]
+annual_stance["hesitancy_percent"] = (
+    annual_stance["hesitant"] / annual_stance["total"] * 100
 )
 
-stance_summary.to_csv(OUTPUT_DIR / "overall_stance_distribution.csv", index=False)
-hesitancy_summary.to_csv(OUTPUT_DIR / "overall_hesitancy.csv", index=False)
-
-
-# 3. Annual stance distribution
-annual_counts = pd.crosstab(df["year"], df["stance_label"]).reindex(
-    columns=STANCE_NAMES
-)
-annual_counts.columns = [STANCE_NAMES[x] for x in annual_counts.columns]
-annual_counts["total_posts"] = annual_counts.sum(axis=1)
-annual_counts["hesitant_posts"] = (
-    annual_counts["delayed_vaccination"] + annual_counts["vaccine_refusal"]
-)
-annual_counts["hesitancy_rate_percent"] = (
-    annual_counts["hesitant_posts"] / annual_counts["total_posts"] * 100
-)
-
-annual_percentages = annual_counts[list(STANCE_NAMES.values())].div(
-    annual_counts["total_posts"], axis=0
-) * 100
-annual_percentages.columns = [f"{x}_percent" for x in annual_percentages.columns]
-
-annual_summary = annual_counts.join(annual_percentages).reset_index()
-annual_summary.to_csv(OUTPUT_DIR / "annual_stance_distribution.csv", index=False)
-
-
-# 4. Monthly posting volume and vaccine hesitancy
 monthly = (
-    df.set_index("date")
-    .resample("MS")
-    .agg(total_posts=("master_id", "size"), hesitant_posts=("hesitant", "sum"))
+    data.set_index("date").resample("MS")
+    .agg(total=("master_id", "size"), hesitant=("hesitant", "sum"))
 )
-monthly["hesitancy_rate"] = monthly["hesitant_posts"] / monthly["total_posts"]
-monthly["hesitancy_rate_percent"] = monthly["hesitancy_rate"] * 100
+monthly["hesitancy_proportion"] = monthly["hesitant"] / monthly["total"]
+monthly["hesitancy_percent"] = monthly["hesitancy_proportion"] * 100
 
-
-# 5. STL decomposition of transformed monthly series
-monthly["log_posting_volume"] = np.log(monthly["total_posts"])
-monthly["logit_hesitancy_rate"] = np.log(
-    monthly["hesitancy_rate"] / (1 - monthly["hesitancy_rate"])
-)
-
-volume_stl = STL(
-    monthly["log_posting_volume"],
-    period=STL_PERIOD,
-    seasonal=STL_SEASONAL,
-    trend=STL_TREND,
-    robust=True,
+volume_model = STL(
+    np.log(monthly["total"]), period=12, seasonal=13, trend=25, robust=True
 ).fit()
 
-hesitancy_stl = STL(
-    monthly["logit_hesitancy_rate"],
-    period=STL_PERIOD,
-    seasonal=STL_SEASONAL,
-    trend=STL_TREND,
-    robust=True,
+proportion = monthly["hesitancy_proportion"]
+hesitancy_model = STL(
+    np.log(proportion / (1 - proportion)),
+    period=12, seasonal=13, trend=25, robust=True
 ).fit()
 
-monthly["volume_stl_trend"] = volume_stl.trend
-monthly["volume_stl_seasonal"] = volume_stl.seasonal
-monthly["volume_stl_remainder"] = volume_stl.resid
-monthly["hesitancy_stl_trend"] = hesitancy_stl.trend
-monthly["hesitancy_stl_seasonal"] = hesitancy_stl.seasonal
-monthly["hesitancy_stl_remainder"] = hesitancy_stl.resid
+monthly["volume_trend"] = volume_model.trend
+monthly["volume_seasonal"] = volume_model.seasonal
+monthly["volume_remainder"] = volume_model.resid
+monthly["hesitancy_trend"] = hesitancy_model.trend
+monthly["hesitancy_seasonal"] = hesitancy_model.seasonal
+monthly["hesitancy_remainder"] = hesitancy_model.resid
 
+volume_trend = seasonal_trend(monthly["total"])
+hesitancy_trend = seasonal_trend(monthly["hesitancy_percent"])
 
-# 6. Trend and seasonality statistics
-volume_mk = seasonal_mann_kendall(monthly["total_posts"])
-hesitancy_mk = seasonal_mann_kendall(monthly["hesitancy_rate_percent"])
+time_series_statistics = pd.DataFrame([
+    {
+        "series": "monthly_post_volume",
+        "trend_strength": component_strength(volume_model.trend,
+                                               volume_model.resid),
+        "seasonal_strength": component_strength(volume_model.seasonal,
+                                                  volume_model.resid),
+        **volume_trend,
+    },
+    {
+        "series": "monthly_hesitancy_percent",
+        "trend_strength": component_strength(hesitancy_model.trend,
+                                               hesitancy_model.resid),
+        "seasonal_strength": component_strength(hesitancy_model.seasonal,
+                                                  hesitancy_model.resid),
+        **hesitancy_trend,
+    },
+])
 
-time_series_statistics = pd.DataFrame(
-    [
-        {
-            "series": "monthly_posting_volume",
-            "trend_strength": component_strength(volume_stl.trend, volume_stl.resid),
-            "seasonal_strength": component_strength(
-                volume_stl.seasonal, volume_stl.resid
-            ),
-            "seasonal_mk_tau": volume_mk["tau"],
-            "seasonal_mk_z": volume_mk["z"],
-            "seasonal_mk_p_value": volume_mk["p_value"],
-            "seasonal_theil_sen_slope_per_year": seasonal_theil_sen(
-                monthly["total_posts"]
-            ),
-        },
-        {
-            "series": "monthly_hesitancy_rate_percent",
-            "trend_strength": component_strength(
-                hesitancy_stl.trend, hesitancy_stl.resid
-            ),
-            "seasonal_strength": component_strength(
-                hesitancy_stl.seasonal, hesitancy_stl.resid
-            ),
-            "seasonal_mk_tau": hesitancy_mk["tau"],
-            "seasonal_mk_z": hesitancy_mk["z"],
-            "seasonal_mk_p_value": hesitancy_mk["p_value"],
-            "seasonal_theil_sen_slope_per_year": seasonal_theil_sen(
-                monthly["hesitancy_rate_percent"]
-            ),
-        },
-    ]
-)
-time_series_statistics.to_csv(
-    OUTPUT_DIR / "time_series_statistics.csv", index=False
-)
+anomalies = []
+for outcome in ["volume", "hesitancy"]:
+    robust_z, hampel, pattern = anomaly_scores(monthly[f"{outcome}_remainder"])
+    result = pd.DataFrame({
+        "outcome": outcome,
+        "month": monthly.index,
+        "robust_z": robust_z,
+        "hampel": hampel,
+        "detection_pattern": pattern,
+    })
+    anomalies.append(result[result["detection_pattern"] != ""])
 
-
-# 7. Positive anomalous months in both STL remainder series
-for prefix in ["volume", "hesitancy"]:
-    z_score, hampel_score, positive_anomaly, detection_pattern = anomaly_scores(
-        monthly[f"{prefix}_stl_remainder"]
-    )
-    monthly[f"{prefix}_robust_z_score"] = z_score
-    monthly[f"{prefix}_hampel_score"] = hampel_score
-    monthly[f"{prefix}_positive_anomaly"] = positive_anomaly
-    monthly[f"{prefix}_detection_pattern"] = detection_pattern
-
-anomaly_tables = []
-for prefix, outcome in [
-    ("volume", "public_post_volume"),
-    ("hesitancy", "vaccine_hesitancy_rate"),
-]:
-    table = monthly.loc[monthly[f"{prefix}_positive_anomaly"]].reset_index()
-    table = table[
-        [
-            "date",
-            f"{prefix}_robust_z_score",
-            f"{prefix}_hampel_score",
-            f"{prefix}_detection_pattern",
-        ]
-    ].rename(
-        columns={
-            f"{prefix}_robust_z_score": "robust_z_score",
-            f"{prefix}_hampel_score": "hampel_score",
-            f"{prefix}_detection_pattern": "detection_pattern",
-        }
-    )
-    table["outcome"] = outcome
-    anomaly_tables.append(table)
-
-anomalous_months = pd.concat(anomaly_tables, ignore_index=True)
-anomalous_months = anomalous_months[
-    ["outcome", "date", "robust_z_score", "hampel_score", "detection_pattern"]
-]
-
-monthly.reset_index().to_csv(OUTPUT_DIR / "monthly_stl_results.csv", index=False)
-anomalous_months.to_csv(OUTPUT_DIR / "positive_anomalous_months.csv", index=False)
+anomalous_months = pd.concat(anomalies, ignore_index=True)
