@@ -23,8 +23,8 @@ def group_comparison(delayed_n, refusal_n, delayed_total, refusal_total):
         + refusal * (1 - refusal) / refusal_total
     )
 
-    ratio = refusal / delayed
-    log_ratio_se = np.sqrt(
+    mrr = refusal / delayed
+    log_mrr_se = np.sqrt(
         (1 - refusal) / (refusal_total * refusal)
         + (1 - delayed) / (delayed_total * delayed)
     )
@@ -36,9 +36,9 @@ def group_comparison(delayed_n, refusal_n, delayed_total, refusal_total):
         "difference_pp": difference * 100,
         "difference_ci_low": (difference - z * difference_se) * 100,
         "difference_ci_high": (difference + z * difference_se) * 100,
-        "prevalence_ratio": ratio,
-        "prevalence_ratio_ci_low": np.exp(np.log(ratio) - z * log_ratio_se),
-        "prevalence_ratio_ci_high": np.exp(np.log(ratio) + z * log_ratio_se),
+        "mention_rate_ratio": mrr,
+        "mention_rate_ratio_ci_low": np.exp(np.log(mrr) - z * log_mrr_se),
+        "mention_rate_ratio_ci_high": np.exp(np.log(mrr) + z * log_mrr_se),
     })
 
 
@@ -62,7 +62,7 @@ def misclassification_analysis(comparison, performance, simulations=10000):
         adjusted_delayed = np.clip(delayed_raw, 0, 1)
         adjusted_refusal = np.clip(refusal_raw, 0, 1)
         adjusted_difference = adjusted_refusal - adjusted_delayed
-        adjusted_ratio = adjusted_refusal / adjusted_delayed
+        adjusted_mrr = adjusted_refusal / adjusted_delayed
 
         results.append({
             "second_level": row.second_level,
@@ -75,9 +75,9 @@ def misclassification_analysis(comparison, performance, simulations=10000):
             "adjusted_difference_median_pp": np.median(adjusted_difference) * 100,
             "adjusted_difference_interval_low": np.quantile(adjusted_difference, 0.025) * 100,
             "adjusted_difference_interval_high": np.quantile(adjusted_difference, 0.975) * 100,
-            "adjusted_ratio_median": np.nanmedian(adjusted_ratio),
-            "adjusted_ratio_interval_low": np.nanquantile(adjusted_ratio, 0.025),
-            "adjusted_ratio_interval_high": np.nanquantile(adjusted_ratio, 0.975),
+            "adjusted_mrr_median": np.nanmedian(adjusted_mrr),
+            "adjusted_mrr_interval_low": np.nanquantile(adjusted_mrr, 0.025),
+            "adjusted_mrr_interval_high": np.nanquantile(adjusted_mrr, 0.975),
             "direction_retained_percent": np.mean(
                 adjusted_difference * (refusal - delayed) > 0
             ) * 100,

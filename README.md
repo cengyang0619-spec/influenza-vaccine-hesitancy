@@ -22,9 +22,21 @@ Hesitancy: Decoupling Delay and Refusal via Semantic Attribution*.
 
 - `data/monthly_stance_summary.csv`: monthly counts and percentages for the
   four vaccination-stance categories from January 2016 to December 2025.
+- `data/monthly_attribution_summary.csv`: monthly aggregate counts for the
+  65,987 vaccine-hesitant posts from January 2016 to December 2025. It includes
+  delayed-vaccination and vaccine-refusal totals, second-level attribution
+  counts overall and by stance, and specific-reason counts. Attribution is
+  multi-label, and second-level columns contain unique-post counts. Code names
+  and definitions are provided in `analysis/reason_codebook.csv`.
 - `data/attribution_analysis_human_annotated_dataset.xlsx`: development and
   test splits, stance categories, two independent human annotations, and
   adjudicated attribution labels for 1,000 records.
+
+## Data availability
+
+This repository provides non-identifying aggregate and supporting data. Raw
+and post-level social-media data are not publicly shared because of privacy
+and platform/data-access restrictions.
 
 ## Preprocessing
 
@@ -48,3 +60,8 @@ Hesitancy: Decoupling Delay and Refusal via Semantic Attribution*.
 - `prompts/05_attribution_coding/v2.md`: final attribution-coding instruction.
 - `prompts/06_first_person_decision_filter.md`: first-person vaccination
   decision-filtering instruction.
+
+## Search strategy
+
+- `original_chinese_search_strategy.md`: original Chinese-language search
+  strategy used for social-media data retrieval.
