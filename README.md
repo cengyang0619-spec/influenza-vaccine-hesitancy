@@ -28,7 +28,7 @@ Hesitancy: Decoupling Delay and Refusal via Semantic Attribution*.
   counts overall and by stance, and specific-reason counts. Attribution is
   multi-label, and second-level columns contain unique-post counts. Code names
   and definitions are provided in `analysis/reason_codebook.csv`.
-- `data/attribution_analysis_human_annotated_dataset.xlsx`: development and
+- `data/attribution_analysis_human_annotated_dataset.csv`: development and
   test splits, stance categories, two independent human annotations, and
   adjudicated attribution labels for 1,000 records.
 

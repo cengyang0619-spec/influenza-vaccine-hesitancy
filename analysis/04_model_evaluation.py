@@ -118,9 +118,8 @@ attribution_overall, attribution_per_category = multilabel_metrics(
     attribution_labels,
 )
 
-human_reference = pd.read_excel(
-    "../data/attribution_analysis_human_annotated_dataset.xlsx",
-    sheet_name="reference_data",
+human_reference = pd.read_csv(
+    "../data/attribution_analysis_human_annotated_dataset.csv"
 )
 human_agreement, human_agreement_per_category = multilabel_metrics(
     human_reference["annotator_1_labels"],
